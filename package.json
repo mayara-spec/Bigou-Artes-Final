@@ -1,0 +1,18 @@
+{
+  "name": "bigou-campaign-builder",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "lucide-static": "^0.575.0"
+  }
+}
