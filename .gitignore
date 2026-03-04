@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test/debug scripts
+check-fetch.js
+fix.js
+test-data.csv
+test-node-fetch.js
+test-proxy.js
+task.md

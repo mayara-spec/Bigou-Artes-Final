@@ -62,11 +62,11 @@ export const optimizeImage = (file, maxWidth = 1200, maxHeight = 1200, quality =
 };
 
 /**
- * Optimize a logo image (small, circular shape - higher quality needed)
+ * Optimize a logo image (small, circular shape - higher quality needed for 256px Thumbnails)
  * @param {File|Blob} file 
  */
 export const optimizeLogo = (file) =>
-  optimizeImage(file, 400, 400, 0.85, false);
+  optimizeImage(file, 256, 256, 0.85, false);
 
 /**
  * Optimize a city photo (medium size, shown in grid thumbnails)

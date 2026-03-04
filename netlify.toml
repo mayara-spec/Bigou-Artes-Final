@@ -1,0 +1,40 @@
+# ─── Build ────────────────────────────────────────────────────────────────────
+[build]
+  command   = "npm run build"
+  publish   = "dist"
+
+# ─── Environment ──────────────────────────────────────────────────────────────
+[build.environment]
+  NODE_VERSION = "20"
+
+# ─── SPA Fallback ─────────────────────────────────────────────────────────────
+# All unmatched routes serve index.html so client-side routing works on refresh.
+
+# Logo proxy → Netlify Function (must come BEFORE the catch-all)
+[[redirects]]
+  from   = "/logo-proxy"
+  to     = "/.netlify/functions/logo-proxy"
+  status = 200
+  force  = true
+
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# ─── Cache Headers ────────────────────────────────────────────────────────────
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

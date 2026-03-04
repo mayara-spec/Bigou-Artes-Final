@@ -49,6 +49,17 @@ const readPersistedDB = async (key, defaultVal) => {
   });
 };
 
+export const clearStateDB = async () => {
+  if (!dbInstance) await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = dbInstance.transaction([STORE_NAME], 'readwrite');
+    const store = transaction.objectStore(STORE_NAME);
+    const request = store.clear();
+    request.onsuccess = () => resolve();
+    request.onerror = (e) => reject(e.target.error);
+  });
+};
+
 const persistDB = async (key, value) => {
   if (!dbInstance) await initDB();
   return new Promise((resolve, reject) => {
@@ -69,6 +80,8 @@ const defaultAM = {
   showCityModal: false,
   modalType: 'cities',
   showDeleteConfirm: false,
+  showClearAllConfirm: false,
+  showClearSpreadsheetConfirm: false,
   deleteId: null,
   deleteType: null,
   selectedSegmentId: null,
@@ -82,7 +95,8 @@ const defaultAM = {
     dynamicOptions: {
       cityImage: true,
       useTop20: true,
-      useCityText: true
+      useCityText: true,
+      usePartnerCount: false
     }
   },
   builderSlots: {
@@ -93,7 +107,9 @@ const defaultAM = {
     cityImageFeed: null,
     cityImageStory: null,
     cityTextFeed: null,
-    cityTextStory: null
+    cityTextStory: null,
+    partnerCountFeed: null,
+    partnerCountStory: null
   }
 };
 
@@ -313,6 +329,9 @@ export const loadState = async () => {
         if (blob) {
           logo.data = URL.createObjectURL(blob);
           logo.memoryUrl = true;
+        } else if (logo.fallbackUrl) {
+          logo.data = logo.fallbackUrl;
+          logo.memoryUrl = false;
         }
       } catch (err) { }
     }
@@ -327,6 +346,9 @@ export const loadState = async () => {
         if (blob) {
           logo.data = URL.createObjectURL(blob);
           logo.memoryUrl = true;
+        } else if (logo.fallbackUrl) {
+          logo.data = logo.fallbackUrl;
+          logo.memoryUrl = false;
         }
       } catch (err) { }
     }

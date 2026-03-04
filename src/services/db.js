@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'bigou-assets-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Upgraded for establishments
 
 let dbInstance = null;
 
@@ -44,6 +44,13 @@ export const initDB = () => {
             }
             if (!db.objectStoreNames.contains('templates')) {
                 db.createObjectStore('templates', { keyPath: 'id' });
+            }
+
+            // Phase 2: Establishments Store
+            if (!db.objectStoreNames.contains('establishments')) {
+                const store = db.createObjectStore('establishments', { keyPath: 'estabelecimento_id' });
+                // Index for easy querying by city during curation
+                store.createIndex('cidade', 'cidade', { unique: false });
             }
         };
     });
@@ -101,14 +108,16 @@ export const deleteCityPhoto = async (cityName) => {
 };
 
 // --- Top 20 Logos ---
-export const saveTop20Logo = async (cityName, fileName, logoBlob) => {
+export const saveTop20Logo = async (cityName, fileName, logoBlob, eTag = null, lastModified = null, customId = null) => {
     return _runTransaction('top20Logos', 'readwrite', (store, resolve, reject) => {
-        const id = `${cityName}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        const id = customId || `${cityName}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
         const data = {
             id,
             cityName,
             fileName,
             logoBlob,
+            eTag,
+            lastModified,
             updatedAt: Date.now()
         };
         const req = store.put(data);
@@ -151,16 +160,26 @@ export const getTop20LogoBlob = async (id) => {
     });
 };
 
+export const getTop20LogoFull = async (id) => {
+    return _runTransaction('top20Logos', 'readonly', (store, resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result ? req.result : null);
+        req.onerror = () => reject(req.error);
+    });
+};
+
 // --- Segment Logos ---
-export const saveSegmentLogo = async (segmentId, cityName, fileName, logoBlob) => {
+export const saveSegmentLogo = async (segmentId, cityName, fileName, logoBlob, eTag = null, lastModified = null, customId = null) => {
     return _runTransaction('segmentLogos', 'readwrite', (store, resolve, reject) => {
-        const id = `${segmentId}-${cityName}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        const id = customId || `${segmentId}-${cityName}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
         const data = {
             id,
             segmentId,
             cityName,
             fileName,
             logoBlob,
+            eTag,
+            lastModified,
             updatedAt: Date.now()
         };
         const req = store.put(data);
@@ -203,6 +222,14 @@ export const getSegmentLogoBlob = async (id) => {
     });
 };
 
+export const getSegmentLogoFull = async (id) => {
+    return _runTransaction('segmentLogos', 'readonly', (store, resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result ? req.result : null);
+        req.onerror = () => reject(req.error);
+    });
+};
+
 // --- Fonts ---
 export const saveFont = async (fontName, fontFormat, fontBlob) => {
     return _runTransaction('fonts', 'readwrite', (store, resolve, reject) => {
@@ -236,10 +263,79 @@ export const deleteFont = async (id) => {
     });
 };
 
+// --- Establishments ---
+export const saveEstablishment = async (data) => {
+    return _runTransaction('establishments', 'readwrite', (store, resolve, reject) => {
+        // data should contain { estabelecimento_id, nome_loja, cidade, segmentos, pedidos_ultimos_28_dias, logotipo, logoBlob, updatedAt }
+        const req = store.put(data);
+        req.onsuccess = () => resolve(data.estabelecimento_id);
+        req.onerror = () => reject(req.error);
+    });
+};
+
+export const getEstablishment = async (id) => {
+    return _runTransaction('establishments', 'readonly', (store, resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+};
+
+export const getEstablishmentsByCity = async (cityName) => {
+    return _runTransaction('establishments', 'readonly', (store, resolve, reject) => {
+        const index = store.index('cidade');
+        const range = IDBKeyRange.only(cityName);
+        const req = index.getAll(range);
+
+        req.onsuccess = () => {
+            // If getAll is supported on the index (modern browsers), this returns all matching records.
+            resolve(req.result || []);
+        };
+        req.onerror = () => reject(req.error);
+    });
+};
+
+export const deleteEstablishment = async (id) => {
+    return _runTransaction('establishments', 'readwrite', (store, resolve, reject) => {
+        const req = store.delete(id);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    });
+};
+
 // --- Utilities ---
 export const clearDB = async () => {
     if (!dbInstance) await initDB();
-    const stores = ['cities', 'top20Logos', 'segmentLogos', 'fonts', 'templates'];
+    const stores = ['cities', 'top20Logos', 'segmentLogos', 'fonts', 'templates', 'establishments'];
+    const p = stores.map(storeName => {
+        return new Promise((resolve, reject) => {
+            const tx = dbInstance.transaction([storeName], 'readwrite');
+            const store = tx.objectStore(storeName);
+            const req = store.clear();
+            req.onsuccess = resolve;
+            req.onerror = reject;
+        });
+    });
+    return Promise.all(p);
+};
+
+export const clearStore = async (storeName) => {
+    if (!dbInstance) await initDB();
+    return new Promise((resolve, reject) => {
+        const tx = dbInstance.transaction([storeName], 'readwrite');
+        const store = tx.objectStore(storeName);
+        const req = store.clear();
+        req.onsuccess = resolve;
+        req.onerror = reject;
+    });
+};
+
+/**
+ * Selective Clear: Only data derived from SQL spreadsheet
+ */
+export const clearSpreadsheetData = async () => {
+    if (!dbInstance) await initDB();
+    const stores = ['top20Logos', 'segmentLogos', 'establishments'];
     const p = stores.map(storeName => {
         return new Promise((resolve, reject) => {
             const tx = dbInstance.transaction([storeName], 'readwrite');

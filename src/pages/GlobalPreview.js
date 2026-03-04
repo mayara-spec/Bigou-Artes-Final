@@ -1,5 +1,6 @@
 import { state, navigate } from '../services/state.js';
 import { Renderer } from '../services/Renderer.js';
+import { downloadPendingLogos, getPendingDownloadGroups } from '../services/dataSync.js';
 
 export const renderGlobalPreview = async (container) => {
   const config = state.currentCampaignConfig;
@@ -30,10 +31,22 @@ export const renderGlobalPreview = async (container) => {
   container.innerHTML = `
       <div style="min-height:100vh;background:#F4F7F9;display:flex;flex-direction:column;align-items:center;justify-content:center;">
         <div style="width: 50px; height: 50px; border: 5px solid #E2E8F0; border-top-color: #10B981; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-        <p style="margin-top:20px;font-weight:800;color:#1E293B;font-size:1.125rem;">Preparando Previews Globais...</p>
+        <p id="preview-loading-text" style="margin-top:20px;font-weight:800;color:#1E293B;font-size:1.125rem;">Preparando Previews Globais...</p>
         <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
       </div>
     `;
+
+  const loadingTextEl = container.querySelector('#preview-loading-text');
+
+  // Phase 2 Lazy Load - Fetch missing images before building previews
+  const stats = getPendingDownloadGroups();
+  if (stats.totalUniqueUrlsToDownload > 0 && loadingTextEl) {
+    loadingTextEl.innerText = `Baixando ${stats.totalUniqueUrlsToDownload} logos pendentes...`;
+    await downloadPendingLogos(stats.groups, (msg) => {
+      loadingTextEl.innerText = msg;
+    });
+    loadingTextEl.innerText = 'Construindo Layouts...';
+  }
 
   // Load custom fonts
   for (const typo of (state.typographies || [])) {
@@ -77,11 +90,11 @@ export const renderGlobalPreview = async (container) => {
       const geralSegCityId = geralSegCity ? geralSegCity.id : null;
 
       for (const segId of activeSegmentIds) {
-        let segLogos = segCityId ? allSegmentLogos.filter(l => String(l.cityId) === String(segCityId) && l.segmentId === segId) : [];
+        let segLogos = segCityId ? allSegmentLogos.filter(l => String(l.cityId) === String(segCityId) && String(l.segmentId) === String(segId)) : [];
 
         // Fallback to "Geral" folder if city folder is empty or non-existent
         if (segLogos.length === 0 && geralSegCityId) {
-          segLogos = allSegmentLogos.filter(l => String(l.cityId) === String(geralSegCityId) && l.segmentId === segId);
+          segLogos = allSegmentLogos.filter(l => String(l.cityId) === String(geralSegCityId) && String(l.segmentId) === String(segId));
         }
 
         if (segLogos.length === 0) {
@@ -116,6 +129,7 @@ export const renderGlobalPreview = async (container) => {
       cityName,
       cityLogos,
       cityPhotoData,
+      partnerCount: city.partnerCount || 0,
       warnings,
       status: warnings.length === 0 ? 'OK' : 'ALERTA',
       rendered: false
@@ -346,7 +360,16 @@ export const renderGlobalPreview = async (container) => {
     if (!containerDiv) return;
 
     const cityImgToPass = config.dynamicOptions?.cityImage ? cityData.cityPhotoData : null;
-    const cityTextToPass = config.dynamicOptions?.useCityText ? cityData.cityName : null;
+
+    let shortCityText = cityData.cityName;
+    if (shortCityText.includes('Bom Jesus do Itabapoana')) {
+      shortCityText = 'Bom Jesus';
+    } else if (shortCityText.includes('São José do Vale do Rio Preto')) {
+      shortCityText = 'São José';
+    }
+
+    const cityTextToPass = config.dynamicOptions?.useCityText ? shortCityText : null;
+    const partnerCountToPass = config.dynamicOptions?.usePartnerCount ? (cityData.partnerCount || 0) : undefined;
 
     containerDiv.innerHTML = `
            <div style="width: 100%; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:0.5rem; color:#10B981; font-size:0.875rem; font-weight:700; padding:2rem;">
@@ -375,11 +398,11 @@ export const renderGlobalPreview = async (container) => {
           if (!segSlots) continue;
 
           // Fetch segment-specific logos: City -> Segment
-          let cityLogos = segCityId ? allSegmentLogos.filter(l => String(l.cityId) === String(segCityId) && l.segmentId === segId).map(l => l.data) : [];
+          let cityLogos = segCityId ? allSegmentLogos.filter(l => String(l.cityId) === String(segCityId) && String(l.segmentId) === String(segId)).map(l => l.data) : [];
 
           // Fallback to "Geral" folder if city folder is empty or non-existent
           if (cityLogos.length === 0 && geralSegCityId) {
-            cityLogos = allSegmentLogos.filter(l => String(l.cityId) === String(geralSegCityId) && l.segmentId === segId).map(l => l.data);
+            cityLogos = allSegmentLogos.filter(l => String(l.cityId) === String(geralSegCityId) && String(l.segmentId) === String(segId)).map(l => l.data);
           }
 
           // Skip if no logos (per requirement) - NO FALLBACKS to anything else
@@ -397,7 +420,9 @@ export const renderGlobalPreview = async (container) => {
               canvas, segTemplate.feedTemplate, cityImgToPass,
               { slots: segSlots.feed?.logos || [], data: cityLogos },
               { area: segSlots.feed?.cityText, imageArea: segSlots.feed?.cityImage, font: segSlots.feed?.cityText?.font, color: segSlots.feed?.cityText?.color },
-              cityTextToPass, 'feed'
+              cityTextToPass, 'feed',
+              { area: segSlots.feed?.partnerCount, font: segSlots.feed?.partnerCount?.font, color: segSlots.feed?.partnerCount?.color },
+              partnerCountToPass
             );
             const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
             feedUrl = URL.createObjectURL(blob);
@@ -410,7 +435,9 @@ export const renderGlobalPreview = async (container) => {
               sCanvas, segTemplate.storyTemplate, cityImgToPass,
               { slots: segSlots.story?.logos || [], data: cityLogos },
               { area: segSlots.story?.cityText, imageArea: segSlots.story?.cityImage, font: segSlots.story?.cityText?.font, color: segSlots.story?.cityText?.color },
-              cityTextToPass, 'story'
+              cityTextToPass, 'story',
+              { area: segSlots.story?.partnerCount, font: segSlots.story?.partnerCount?.font, color: segSlots.story?.partnerCount?.color },
+              partnerCountToPass
             );
             const blob = await new Promise(resolve => sCanvas.toBlob(resolve, 'image/jpeg', 0.85));
             storyUrl = URL.createObjectURL(blob);
@@ -457,7 +484,9 @@ export const renderGlobalPreview = async (container) => {
             canvas, config.feedTemplate, cityImgToPass,
             { slots: slots.feed?.logos || [], data: cityData.cityLogos },
             { area: slots.feed?.cityText, imageArea: slots.feed?.cityImage, font: slots.feed?.cityText?.font, color: slots.feed?.cityText?.color },
-            cityTextToPass, 'feed'
+            cityTextToPass, 'feed',
+            { area: slots.feed?.partnerCount, font: slots.feed?.partnerCount?.font, color: slots.feed?.partnerCount?.color },
+            partnerCountToPass
           );
           const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85));
           feedDataUrl = URL.createObjectURL(blob);
@@ -470,7 +499,9 @@ export const renderGlobalPreview = async (container) => {
             sCanvas, config.storyTemplate, cityImgToPass,
             { slots: slots.story?.logos || [], data: cityData.cityLogos },
             { area: slots.story?.cityText, imageArea: slots.story?.cityImage, font: slots.story?.cityText?.font, color: slots.story?.cityText?.color },
-            cityTextToPass, 'story'
+            cityTextToPass, 'story',
+            { area: slots.story?.partnerCount, font: slots.story?.partnerCount?.font, color: slots.story?.partnerCount?.color },
+            partnerCountToPass
           );
           const blob = await new Promise(resolve => sCanvas.toBlob(resolve, 'image/jpeg', 0.85));
           storyDataUrl = URL.createObjectURL(blob);

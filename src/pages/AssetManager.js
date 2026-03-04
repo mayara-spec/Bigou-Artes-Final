@@ -1,6 +1,7 @@
-import { state, subscribe } from '../services/state.js';
+import { state, loadState, subscribe, clearStateDB } from '../services/state.js';
 import { optimizeLogo, optimizeCityPhoto } from '../utils/imageOptimizer.js';
-import { saveCityPhoto, getCityPhoto, deleteCityPhoto, saveTop20Logo, deleteTop20Logo, deleteTop20LogosByCity, getTop20LogoBlob, saveSegmentLogo, deleteSegmentLogo, deleteSegmentLogosByCity, getSegmentLogoBlob, saveFont, getFontBlob, deleteFont, clearDB } from '../services/db.js';
+import { saveCityPhoto, getCityPhoto, deleteCityPhoto, saveTop20Logo, deleteTop20Logo, deleteTop20LogosByCity, getTop20LogoBlob, saveSegmentLogo, deleteSegmentLogo, deleteSegmentLogosByCity, getSegmentLogoBlob, saveFont, getFontBlob, deleteFont, clearDB, clearSpreadsheetData } from '../services/db.js';
+import { syncSQLData, retryFailedDownloads, downloadPendingLogos, getPendingDownloadGroups } from '../services/dataSync.js';
 
 let storageInfo = { usage: 0, quota: 0, percent: 0, loaded: false };
 
@@ -77,42 +78,82 @@ export const renderAssetManager = (container) => {
     };
   };
 
-  window.clearAllData = async () => {
-    if (confirm("TEM CERTEZA? Esta ação apagará DEFINITIVAMENTE todas as fotos das cidades, logos em top20, logos em segmentos e tipografias de TODA a aplicação.")) {
-      try {
-        container.style.opacity = '0.5';
-        container.style.pointerEvents = 'none';
+  window.clearAllData = () => {
+    state.assetManager = { ...state.assetManager, showClearAllConfirm: true };
+  };
 
-        // Clear db
-        await clearDB();
+  window.closeClearAll = () => {
+    state.assetManager = { ...state.assetManager, showClearAllConfirm: false };
+  };
 
-        // Clear object urls from memory
-        [...state.cityPhotos, ...state.segmentLogos, ...state.logos, ...state.typographies]
-          .forEach(f => { if (f.memoryUrl) URL.revokeObjectURL(f.data); });
-
-        // Reset state tree except campaigns
-        state.cities = [];
-        state.cityPhotos = [];
-        state.top20Folders = [];
-        state.logos = [];
-        state.segments = [];
-        state.segmentCities = [];
-        state.segmentLogos = [];
-        state.typographies = [];
-
-        state.assetManager = { activeTab: 'cities', selectedFolderCityId: null, selectedSegmentId: null };
-
-        localStorage.clear();
-        alert("Banco de dados completamente resetado com sucesso!");
-
-        container.style.opacity = '1';
-        container.style.pointerEvents = 'auto';
-      } catch (err) {
-        console.error(err);
-        alert("Ocorreu um erro ao tentar limpar os dados.");
-        container.style.opacity = '1';
-        container.style.pointerEvents = 'auto';
+  window.confirmClearAllData = async () => {
+    try {
+      // Show loading
+      const btn = document.getElementById('confirm-reset-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader-inline"></span> Apagando...';
       }
+
+      // 1. Clear Asset DB (Cities, Logos, Fonts, etc)
+      await clearDB();
+
+      // 2. Clear State DB (app_state)
+      await clearStateDB();
+
+      // 3. Clear memory URLs
+      [...state.cityPhotos, ...state.segmentLogos, ...state.logos, ...state.typographies]
+        .forEach(f => { if (f.memoryUrl && f.data) { try { URL.revokeObjectURL(f.data); } catch (e) { } } });
+
+      // 4. Clear all storages
+      localStorage.clear();
+      sessionStorage.clear();
+
+      // 5. Reload to fresh state
+      window.location.reload();
+    } catch (err) {
+      console.error("[AssetManager] Failed to clear data:", err);
+      alert("Erro ao apagar dados: " + err.message);
+      window.closeClearAll();
+    }
+  };
+
+  window.clearSpreadsheetData = () => {
+    state.assetManager = { ...state.assetManager, showClearSpreadsheetConfirm: true };
+  };
+
+  window.closeClearSpreadsheet = () => {
+    state.assetManager = { ...state.assetManager, showClearSpreadsheetConfirm: false };
+  };
+
+  window.confirmClearSpreadsheetData = async () => {
+    try {
+      const btn = document.getElementById('confirm-spreadsheet-btn');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loader-inline"></span> Limpando...';
+      }
+
+      await clearSpreadsheetData();
+
+      // Clean memory URLs
+      [...state.logos, ...state.segmentLogos].forEach(l => {
+        if (l.memoryUrl && l.data) { try { URL.revokeObjectURL(l.data); } catch (e) { } }
+      });
+
+      // Reset state variables derived from spreadsheet
+      state.logos = [];
+      state.segmentLogos = [];
+      state.top20Folders = [];
+      state.segmentCities = state.segmentCities.filter(c => c.id === 'geral'); // Keep 'Geral'
+      state.cities = state.cities.map(c => ({ ...c, partnerCount: 0 }));
+
+      // Setting flag to false will trigger update via Proxy, but we call update() to be sure
+      state.assetManager = { ...state.assetManager, showClearSpreadsheetConfirm: false };
+    } catch (err) {
+      console.error("[AssetManager] Selective clear error:", err);
+      alert("Erro ao limpar dados: " + err.message);
+      window.closeClearSpreadsheet();
     }
   };
 
@@ -134,6 +175,7 @@ export const renderAssetManager = (container) => {
       { id: 'cities', label: 'Cidades' },
       { id: 'top20', label: 'Top 20' },
       { id: 'segments', label: 'Segmentos' },
+      { id: 'partners', label: 'Parceiros' },
       { id: 'typography', label: 'Tipografias' },
     ];
 
@@ -154,11 +196,18 @@ export const renderAssetManager = (container) => {
             </button>
           `).join('')}
         </div>
-        <div style="display: flex; align-items: center; gap: 1rem; padding-bottom: 0.5rem;">
-           <span id="storage-info-label" style="font-size: 0.75rem; color: #64748B;">
+        <div style="display: flex; align-items: center; gap: 0.75rem; padding-bottom: 0.5rem;">
+           <span id="storage-info-label" style="font-size: 0.75rem; color: #64748B; margin-right: 0.5rem;">
              ${storageInfo.loaded ? `Armazenamento: <b>${storageInfo.percent}%</b> (${storageInfo.usage} / ${storageInfo.quota} MB)` : 'Calculando armazenamento...'}
            </span>
-           <button class="btn btn-secondary" onclick="window.clearAllData()" style="padding: 0.5rem 1rem; border-color: #FECACA; color: #EF4444; background: #FEF2F2; font-size: 0.75rem;">Limpar Todos os Dados</button>
+           <button class="btn btn-secondary" id="btn-import-sql" style="padding: 0.5rem 1rem; font-size: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+             Importar SQL
+           </button>
+
+           <button class="btn btn-secondary" onclick="window.clearSpreadsheetData()" style="padding: 0.5rem 1rem; color: #EF4444; background: #FEF2F2; font-size: 0.75rem; border: 1px solid #FECACA;">🧹 Limpar Planilha</button>
+           <button class="btn btn-secondary" onclick="window.clearAllData()" style="padding: 0.5rem 1rem; border-color: #FECACA; color: #EF4444; background: #FEF2F2; font-size: 0.75rem;">Limpar Tudo</button>
+           <input type="file" id="sql-import-input" style="display: none;" accept=".csv,.txt,.sql">
         </div>
       </div>
     `;
@@ -377,29 +426,30 @@ export const renderAssetManager = (container) => {
 
             <!-- Asset List -->
             <div style="margin-top: 4rem;">
-               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
-                 <h4 style="font-size: 0.75rem; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.1em;">LOGOS NA PASTA (${assets.length})</h4>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                  <h4 style="font-size: 0.75rem; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: 0.1em;">${am.activeTab === 'cities' ? 'FOTOS' : 'LOGOS'} NA PASTA (${assets.length})</h4>
                  <div style="display: flex; gap: 0.5rem;">
                     <button class="btn-icon active" style="padding: 6px;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></button>
                  </div>
                </div>
 
-               <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.5rem;">
-                 ${assets.map(asset => `
-                   <div class="file-card" style="position: relative;">
-                      <div class="file-card-preview" style="background: white;">
-                        <img src="${asset.data}" style="border-radius: ${am.activeTab === 'cities' ? '0' : '50%'};">
-                      </div>
-                      <div style="padding: 1rem; border-top: 1px solid #F1F5F9; text-align: center;">
-                        <h5 style="font-size: 0.75rem; font-weight: 700; color: #1E293B; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${asset.name || 'Ativo'}</h5>
-                        <p style="font-size: 0.625rem; color: #94A3B8;">Ativo</p>
-                      </div>
-                      <button class="btn-icon delete-folder-asset" data-id="${asset.id}" style="position: absolute; top: 0.5rem; right: 0.5rem; background: rgba(255,255,255,0.9); color: #EF4444; border-radius: 4px; padding: 4px; border: 1px solid #F1F5F9; z-index: 10;">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-                      </button>
-                   </div>
-                 `).join('')}
-               </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1.5rem;">
+                  ${assets.map(asset => `
+                    <div class="file-card" style="position: relative;">
+                       <div class="file-card-preview" style="background: white; display: flex; align-items: center; justify-content: center; min-height: 120px;">
+                         <div id="spinner-${asset.id}" class="loader-inline"></div>
+                         <img class="lazy-blob-img" data-id="${asset.id}" data-type="${am.activeTab === 'cities' ? 'city' : (am.activeTab === 'top20' ? 'top20' : 'segment')}" style="display: none; border-radius: ${am.activeTab === 'cities' ? '12px' : '50%'}; max-width: 100%; max-height: 100%;">
+                       </div>
+                       <div style="padding: 1rem; border-top: 1px solid #F1F5F9; text-align: center;">
+                         <h5 style="font-size: 0.75rem; font-weight: 700; color: #1E293B; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${asset.name || 'Ativo'}</h5>
+                         <p style="font-size: 0.625rem; color: #94A3B8;">Ativo</p>
+                       </div>
+                       <button class="btn-icon delete-folder-asset" data-id="${asset.id}" style="position: absolute; top: 0.5rem; right: 0.5rem; background: rgba(255,255,255,0.9); color: #EF4444; border-radius: 4px; padding: 4px; border: 1px solid #F1F5F9; z-index: 10;">
+                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                       </button>
+                    </div>
+                  `).join('')}
+                </div>
             </div>
           </div>
         `;
@@ -424,6 +474,59 @@ export const renderAssetManager = (container) => {
           <div style="display: flex; gap: 1rem; justify-content: center;">
             <button class="btn btn-secondary" style="flex: 1;" onclick="window.cancelDelete()">Não, Cancelar</button>
             <button class="btn" style="flex: 1; background: #EF4444; color: white;" onclick="window.confirmDelete()">Sim, Excluir</button>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderClearAllConfirmModal = () => {
+    if (!am.showClearAllConfirm) return '';
+    return `
+      <div id="clear-all-modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 2000; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s;">
+        <div class="card" style="width: 450px; padding: 2.5rem; animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); text-align: center; border: 2px solid #FEE2E2; box-shadow: 0 25px 50px -12px rgba(239, 68, 68, 0.25);">
+          <div style="width: 80px; height: 80px; background: #FEF2F2; color: #EF4444; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.5rem; font-size: 2.5rem; box-shadow: 0 0 20px rgba(239, 68, 68, 0.2);">
+            ⚠️
+          </div>
+          <h2 style="margin-bottom: 0.75rem; color: #991B1B; font-weight: 800; letter-spacing: -0.025em;">ZONA DE PERIGO</h2>
+          <p style="color: #4B5563; margin-bottom: 2rem; font-size: 1rem; line-height: 1.6;">
+            Esta ação apagará <strong>DEFINITIVAMENTE</strong> todos os dados da aplicação, incluindo cidades, logos, campanhas e configurações. 
+            <br><span style="color: #6B7280; font-size: 0.8125rem; display: block; margin-top: 0.5rem;">Não há como desfazer esta operação.</span>
+          </p>
+          
+          <div style="background: #FFFBEB; border: 1px solid #FEF3C7; padding: 1rem; border-radius: 0.75rem; margin-bottom: 2rem; text-align: left; display: flex; gap: 0.75rem; align-items: flex-start;">
+            <span style="font-size: 1.25rem;">💡</span>
+            <span style="color: #92400E; font-size: 0.8125rem; font-weight: 500; line-height: 1.4;">O sistema será reiniciado automaticamente após a limpeza para garantir um estado limpo.</span>
+          </div>
+
+          <div style="display: flex; gap: 1rem; justify-content: center;">
+            <button class="btn btn-secondary" style="flex: 1; padding: 0.75rem;" onclick="window.closeClearAll()">Cancelar</button>
+            <button id="confirm-reset-btn" class="btn" style="flex: 1.5; background: #EF4444; color: white; font-weight: 700; padding: 0.75rem; box-shadow: 0 4px 6px -1px rgba(239, 68, 68, 0.2);" onclick="window.confirmClearAllData()">EXCLUIR TUDO</button>
+          </div>
+        </div>
+      </div>
+    `;
+  };
+
+  const renderClearSpreadsheetConfirmModal = () => {
+    if (!am.showClearSpreadsheetConfirm) return '';
+    return `
+      <div id="clear-spreadsheet-modal-overlay" style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 2000; display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s;">
+        <div class="card" style="width: 450px; padding: 2.5rem; animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); text-align: center; border: 1px solid var(--border); box-shadow: 0 25px 50px -12px rgba(0,0,0,0.15);">
+          <div style="width: 80px; height: 80px; background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1.5rem; font-size: 2.5rem;">
+            🧹
+          </div>
+          <h2 style="margin-bottom: 0.75rem; color: var(--text-primary); font-weight: 800; letter-spacing: -0.025em;">LIMPAR PLANILHA</h2>
+          <p style="color: #4B5563; margin-bottom: 2rem; font-size: 1rem; line-height: 1.6;">
+            Isso vai apagar <strong>Top 20, Segmentos e Quantidade de Parceiros</strong> importados da planilha SQL.
+            <br><span style="color: #6B7280; font-size: 0.8125rem; display: block; margin-top: 0.5rem; text-align: left;">
+              ✅ <b>Mantém:</b> templates, fotos de cidades, tipografias e configurações de campanha.
+            </span>
+          </p>
+          
+          <div style="display: flex; gap: 1rem; justify-content: center;">
+            <button class="btn btn-secondary" style="flex: 1; padding: 0.75rem;" onclick="window.closeClearSpreadsheet()">Cancelar</button>
+            <button id="confirm-spreadsheet-btn" class="btn btn-primary" style="flex: 1.5; font-weight: 700; padding: 0.75rem;" onclick="window.confirmClearSpreadsheetData()">LIMPAR DADOS</button>
           </div>
         </div>
       </div>
@@ -471,10 +574,115 @@ export const renderAssetManager = (container) => {
     `;
   };
 
+  const renderPartners = () => {
+    const activeCities = state.cities.filter(c => c.partnerCount > 0);
+    return `
+      <div style="margin-bottom: 1.5rem;">
+        <h3>Quantidade de Parceiros Ativos</h3>
+        <p style="color: var(--text-secondary); font-size: 0.875rem;">Estes dados são sincronizados automaticamente via importação SQL.</p>
+      </div>
+      ${activeCities.length === 0 ? '<p style="text-align: center; color: var(--text-muted); padding: 4rem;">Nenhum dado de parceiro encontrado. Importe a planilha SQL.</p>' : `
+        <div style="background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); overflow: hidden;">
+          <table style="width: 100%; border-collapse: collapse; text-align: left;">
+            <thead style="background: #F8FAFC; border-bottom: 1px solid var(--border);">
+              <tr>
+                <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; text-transform: uppercase;">Cidade</th>
+                <th style="padding: 1rem 1.5rem; color: var(--text-secondary); font-weight: 600; font-size: 0.75rem; text-transform: uppercase;">Quantidade Ativa</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${activeCities.map(c => `
+                <tr style="border-bottom: 1px solid var(--border);">
+                  <td style="padding: 1rem 1.5rem; font-weight: 500;">${c.name}</td>
+                  <td style="padding: 1rem 1.5rem;">
+                    <span style="background: #E0E7FF; color: #4338CA; padding: 0.25rem 0.75rem; border-radius: 1rem; font-size: 0.875rem; font-weight: 600;">
+                      ${c.partnerCount} parceiros
+                    </span>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    `;
+  };
+
+  const hydrateFolderImages = async () => {
+    const imgs = container.querySelectorAll('.lazy-blob-img');
+    for (const img of imgs) {
+      if (img.getAttribute('src')) continue;
+
+      const id = img.dataset.id;
+      const type = img.dataset.type;
+
+      try {
+        let blob = null;
+        if (type === 'top20') blob = await getTop20LogoBlob(id);
+        if (type === 'segment') blob = await getSegmentLogoBlob(id);
+        if (type === 'city') blob = await getCityPhoto(id);
+
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          img.src = url;
+          img.style.display = 'block';
+
+          const spinner = document.getElementById(`spinner-${id}`);
+          if (spinner) spinner.style.display = 'none';
+
+          if (type === 'top20') {
+            const logo = state.logos.find(l => String(l.id) === String(id));
+            if (logo) { logo.data = url; logo.memoryUrl = true; }
+          } else if (type === 'segment') {
+            const logo = state.segmentLogos.find(l => String(l.id) === String(id));
+            if (logo) { logo.data = url; logo.memoryUrl = true; }
+          } else if (type === 'city') {
+            const photo = state.cityPhotos.find(p => String(p.cityId) === String(id));
+            if (photo) { photo.data = url; photo.memoryUrl = true; }
+            // Mutate in-place to avoid triggering state proxy → infinite update loop
+            const cityObj = state.cities.find(c => String(c.id) === String(id));
+            if (cityObj) { cityObj.image = url; cityObj.hasPhoto = true; }
+          }
+        } else {
+          // Check for fallbackUrl
+          let fallback = null;
+          if (type === 'top20') {
+            const logo = state.logos.find(l => String(l.id) === String(id));
+            if (logo && logo.fallbackUrl) fallback = logo.fallbackUrl;
+          } else if (type === 'segment') {
+            const logo = state.segmentLogos.find(l => String(l.id) === String(id));
+            if (logo && logo.fallbackUrl) fallback = logo.fallbackUrl;
+          }
+
+          if (fallback) {
+            img.src = fallback;
+            img.style.display = 'block';
+            if (type === 'top20') {
+              const logo = state.logos.find(l => String(l.id) === String(id));
+              if (logo) { logo.data = fallback; logo.memoryUrl = false; }
+            } else if (type === 'segment') {
+              const logo = state.segmentLogos.find(l => String(l.id) === String(id));
+              if (logo) { logo.data = fallback; logo.memoryUrl = false; }
+            }
+            const spinner = document.getElementById(`spinner-${id}`);
+            if (spinner) spinner.style.display = 'none';
+          } else {
+            const spinner = document.getElementById(`spinner-${id}`);
+            if (spinner) spinner.innerHTML = '<span style="color:#EF4444; font-size:10px;">Falhou</span>';
+          }
+        }
+      } catch (e) {
+        console.error("Erro ao hidratar imagem", id, e);
+      }
+    }
+  };
+
   const update = () => {
+    const am = state.assetManager; // Refresh reference to avoid stale closures
     if (am.selectedFolderCityId) {
       container.innerHTML = `<div style="padding: 2rem;">${renderFolderView()}</div>`;
       attachFolderEvents();
+      hydrateFolderImages();
       return;
     }
 
@@ -488,13 +696,17 @@ export const renderAssetManager = (container) => {
         ${am.activeTab === 'cities' ? renderCities() :
         am.activeTab === 'top20' ? renderTop20() :
           am.activeTab === 'segments' ? renderSegments() :
-            renderTypography()}
+            am.activeTab === 'partners' ? renderPartners() :
+              renderTypography()}
       </div>
       ${renderModal()}
       ${renderDeleteConfirmModal()}
+      ${renderClearAllConfirmModal()}
+      ${renderClearSpreadsheetConfirmModal()}
     `;
 
     attachEvents();
+    hydrateFolderImages();
     if (!storageInfo.loaded) loadStorageInfo();
   };
 
@@ -602,6 +814,43 @@ export const renderAssetManager = (container) => {
           console.error(e);
         }
       });
+    }
+
+    // Removal of btnDownload logic as requested since Import SQL handles everything
+
+
+    // Import SQL Logic
+    const importBtn = container.querySelector('#btn-import-sql');
+    const importInput = container.querySelector('#sql-import-input');
+    if (importBtn && importInput) {
+      importBtn.onclick = () => importInput.click();
+      importInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Create overlay
+        const overlay = document.createElement('div');
+        overlay.style = "position:fixed; inset:0; background:rgba(15,23,42,0.9); z-index:10000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white;";
+        const statusMsg = document.createElement('p');
+        statusMsg.innerText = 'Importando Planilha...';
+        overlay.appendChild(statusMsg);
+        document.body.appendChild(overlay);
+
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          const result = await syncSQLData(ev.target.result, (msg) => {
+            statusMsg.innerText = msg;
+          });
+          overlay.remove();
+          if (result && result.success) {
+            alert(`Importação concluída! ${result.parsed} linhas processadas.`);
+            update();
+          } else {
+            alert("Erro na importação: " + (result?.error || "Desconhecido"));
+          }
+        };
+        reader.readAsText(file);
+      };
     }
   };
 

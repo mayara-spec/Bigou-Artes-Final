@@ -3,7 +3,7 @@ export class Renderer {
      * Render art to canvas. Call canvas.toBlob() after this to get the final image.
      * Returns the canvas for chaining.
      */
-    static async renderToCanvas(canvas, templateImg, cityImg, logos, cityText, cityName, format) {
+    static async renderToCanvas(canvas, templateImg, cityImg, logos, cityText, cityName, format, partnerCountConfig, partnerCountValue) {
         const ctx = canvas.getContext('2d');
         const { w, h } = format === 'feed' ? { w: 1080, h: 1350 } : { w: 1080, h: 1920 };
         canvas.width = w;
@@ -148,6 +148,30 @@ export class Renderer {
             ctx.fillText(cityName, tx, ty);
         }
 
+        // 5. Render Partner Count Text
+        if (partnerCountConfig && partnerCountConfig.area && partnerCountValue !== undefined) {
+            const area = partnerCountConfig.area;
+            ctx.fillStyle = partnerCountConfig.color || '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const tx = (area.x + area.w / 2) * w;
+            const ty = (area.y + area.h / 2) * h;
+            const maxW = area.w * w;
+            const maxH = area.h * h;
+
+            let fontSize = maxH * 0.8;
+            ctx.font = `900 ${fontSize}px "${partnerCountConfig.font || 'Manrope'}"`;
+
+            const textStr = String(partnerCountValue);
+            while (ctx.measureText(textStr).width > maxW && fontSize > 10) {
+                fontSize -= 2;
+                ctx.font = `900 ${fontSize}px "${partnerCountConfig.font || 'Manrope'}"`;
+            }
+
+            ctx.fillText(textStr, tx, ty);
+        }
+
         return canvas;
     }
 
@@ -156,24 +180,67 @@ export class Renderer {
      */
     static canvasToBlob(canvas) {
         return new Promise((resolve, reject) => {
-            canvas.toBlob((blob) => {
-                if (blob) resolve(blob);
-                else reject(new Error('canvas.toBlob returned null'));
-            }, 'image/png');
+            try {
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        resolve(blob);
+                    } else {
+                        // If it returns null but no exception was thrown, canvas might be size 0 or corrupted
+                        reject(new Error('canvas.toBlob returned null. Canvas may be empty or dimensions invalid.'));
+                    }
+                }, 'image/png');
+            } catch (error) {
+                // This catches SECURITY_ERR when the canvas is tainted by CORS images.
+                reject(new Error(`Tainted canvas error (CORS): ${error.message}`));
+            }
         });
     }
 
     static loadImage(src) {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             if (!src) { reject(new Error('No image source')); return; }
-            const img = new Image();
-            // Only set crossOrigin for non-data URLs
-            if (!src.startsWith('data:') && !src.startsWith('blob:')) {
-                img.crossOrigin = 'anonymous';
+
+            // If it's already a safe internal blob/data URL, load directly
+            if (src.startsWith('data:') || src.startsWith('blob:')) {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error('Failed to load internal data/blob URL'));
+                img.src = src;
+                return;
             }
-            img.onload = () => resolve(img);
-            img.onerror = () => reject(new Error(`Failed to load: ${String(src).substring(0, 60)}`));
-            img.src = src;
+
+            const createEmptyImage = () => {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1; canvas.height = 1;
+                return canvas;
+            };
+
+            // Route external URLs through our internal proxy to avoid CORS
+            let fetchUrl = src;
+            if (src.startsWith('http') && !src.startsWith(window.location.origin)) {
+                fetchUrl = `/logo-proxy?url=${encodeURIComponent(src)}`;
+            }
+
+            // CRITICAL FIX FOR ZIP EXPORT CRASHES:
+            // Fetching as a Blob first forces the browser to treat it as an 
+            // internal secure blob, completely bypassing the canvas taint security restriction.
+            try {
+                const response = await fetch(fetchUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+
+                const img = new Image();
+                img.onload = () => {
+                    resolve(img);
+                    setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
+                };
+                img.onerror = () => resolve(createEmptyImage());
+                img.src = objectUrl;
+            } catch (err) {
+                console.warn(`Image fetch failed for: ${String(src).substring(0, 80)}: ${err.message}`);
+                resolve(createEmptyImage());
+            }
         });
     }
 

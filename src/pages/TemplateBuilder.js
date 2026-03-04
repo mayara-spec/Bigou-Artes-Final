@@ -7,7 +7,8 @@ export const renderTemplateBuilder = (container) => {
   const allPotentialSteps = [
     { id: 'logos', key: 'useTop20', label: 'Mapeamento de Logos', icon: '<circle cx="12" cy="12" r="10"/>', accent: '#10B981', desc: 'LOGOS' },
     { id: 'cityImage', key: 'cityImage', label: 'Definir Imagem da Cidade', icon: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>', accent: '#3B82F6', desc: 'IMAGEM' },
-    { id: 'cityText', key: 'useCityText', label: 'Definir Texto da Cidade', icon: '<path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18.1H3"/><path d="M17 6.1v12"/><path d="m21 18.1-4 4-4-4"/>', accent: '#FBBF24', desc: 'TEXTO' }
+    { id: 'cityText', key: 'useCityText', label: 'Definir Texto da Cidade', icon: '<path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18.1H3"/><path d="M17 6.1v12"/><path d="m21 18.1-4 4-4-4"/>', accent: '#FBBF24', desc: 'TEXTO' },
+    { id: 'partnerCount', key: 'usePartnerCount', label: 'Definir Qtde. Parceiros', icon: '<path d="M16 21v-2a4 4 0 00-4-4H5c-1 0-2-1-2-2V5c0-1 1-2 2-2h14a2 2 0 012 2v1"/><circle cx="8.5" cy="7" r="4"/>', accent: '#8B5CF6', desc: 'PARCEIROS' }
   ];
 
   const activeSteps = allPotentialSteps.filter(s => config?.dynamicOptions?.[s.key]);
@@ -23,7 +24,8 @@ export const renderTemplateBuilder = (container) => {
   // Default flat slot shape
   const makeDefaultSlots = () => ({
     logosFeed: [], logosStory: [], logoSource: 'top20', syncMode: 'feed-to-story',
-    cityImageFeed: null, cityImageStory: null, cityTextFeed: null, cityTextStory: null
+    cityImageFeed: null, cityImageStory: null, cityTextFeed: null, cityTextStory: null,
+    partnerCountFeed: null, partnerCountStory: null
   });
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -90,6 +92,8 @@ export const renderTemplateBuilder = (container) => {
       if (!scope || scope === 'text') {
         target.cityTextFeed = source.cityTextFeed ? { ...source.cityTextFeed } : null;
         target.cityTextStory = source.cityTextStory ? { ...source.cityTextStory } : null;
+        target.partnerCountFeed = source.partnerCountFeed ? { ...source.partnerCountFeed } : null;
+        target.partnerCountStory = source.partnerCountStory ? { ...source.partnerCountStory } : null;
       }
       allSegmentSlots[seg.id] = target;
     });
@@ -107,7 +111,7 @@ export const renderTemplateBuilder = (container) => {
   const MAX_HISTORY = 100;
   let history = [];
   let historyIdx = -1;
-  const cloneSlots = () => JSON.parse(JSON.stringify({ lf: slots.logosFeed, ls: slots.logosStory, cif: slots.cityImageFeed, cis: slots.cityImageStory, ctf: slots.cityTextFeed, cts: slots.cityTextStory }));
+  const cloneSlots = () => JSON.parse(JSON.stringify({ lf: slots.logosFeed, ls: slots.logosStory, cif: slots.cityImageFeed, cis: slots.cityImageStory, ctf: slots.cityTextFeed, cts: slots.cityTextStory, pcf: slots.partnerCountFeed, pcs: slots.partnerCountStory }));
   const pushHistory = () => {
     history = history.slice(0, historyIdx + 1);
     history.push(cloneSlots());
@@ -118,6 +122,7 @@ export const renderTemplateBuilder = (container) => {
     slots.logosFeed = snap.lf; slots.logosStory = snap.ls;
     slots.cityImageFeed = snap.cif; slots.cityImageStory = snap.cis;
     slots.cityTextFeed = snap.ctf; slots.cityTextStory = snap.cts;
+    slots.partnerCountFeed = snap.pcf; slots.partnerCountStory = snap.pcs;
     selectedSlotIds.clear(); persistSlots();
   };
   // Push initial state
@@ -222,12 +227,12 @@ export const renderTemplateBuilder = (container) => {
     // scope: 'logos' | 'text' | 'image' | undefined (= all)
     if (slots.syncMode === 'feed-to-story' && sourceFmt === 'feed') {
       if (!scope || scope === 'logos') mirrorLogos('logosFeed', 'logosStory');
-      if (!scope || scope === 'text') mirrorText('cityTextFeed', 'cityTextStory');
+      if (!scope || scope === 'text') { mirrorText('cityTextFeed', 'cityTextStory'); mirrorText('partnerCountFeed', 'partnerCountStory'); }
       if (!scope || scope === 'image') mirrorText('cityImageFeed', 'cityImageStory');
     }
     if (slots.syncMode === 'story-to-feed' && sourceFmt === 'story') {
       if (!scope || scope === 'logos') mirrorLogos('logosStory', 'logosFeed');
-      if (!scope || scope === 'text') mirrorText('cityTextStory', 'cityTextFeed');
+      if (!scope || scope === 'text') { mirrorText('cityTextStory', 'cityTextFeed'); mirrorText('partnerCountStory', 'partnerCountFeed'); }
       if (!scope || scope === 'image') mirrorText('cityImageStory', 'cityImageFeed');
     }
   };
@@ -238,6 +243,7 @@ export const renderTemplateBuilder = (container) => {
     if (!step) return undefined;
     if (step.id === 'logos') return 'logos';
     if (step.id === 'cityText') return 'text';
+    if (step.id === 'partnerCount') return 'text';
     if (step.id === 'cityImage') return 'image';
     return undefined;
   };
@@ -438,8 +444,10 @@ export const renderTemplateBuilder = (container) => {
   };
 
   const renderTextPanel = () => {
+    const step = activeSteps[currentStepIdx];
+    const isPartner = step && step.id === 'partnerCount';
     const fmtSuffix = selectedFormat.charAt(0).toUpperCase() + selectedFormat.slice(1);
-    const ct = slots[`cityText${fmtSuffix}`];
+    const ct = slots[`${isPartner ? 'partnerCount' : 'cityText'}${fmtSuffix}`];
     // Dynamic font list from state.typographies + system defaults
     const systemFonts = [
       { name: 'Manrope Bold (Padrão)', value: 'Manrope' },
@@ -456,20 +464,20 @@ export const renderTemplateBuilder = (container) => {
           APLICAR POSICIONAMENTO EM TODOS OS SEGMENTOS
         </button>
         ` : ''}
-        <div style="background:#FBBF2410;border:1px solid #FBBF2430;padding:1.5rem;border-radius:1rem;display:flex;align-items:center;gap:1rem;color:#FBBF24;">
-          <div style="width:44px;height:44px;background:#FBBF24;border-radius:12px;display:flex;align-items:center;justify-content:center;color:black;">
+        <div style="background:${isPartner ? '#8B5CF6' : '#FBBF24'}10;border:1px solid ${isPartner ? '#8B5CF6' : '#FBBF24'}30;padding:1.5rem;border-radius:1rem;display:flex;align-items:center;gap:1rem;color:${isPartner ? '#8B5CF6' : '#FBBF24'};">
+          <div style="width:44px;height:44px;background:${isPartner ? '#8B5CF6' : '#FBBF24'};border-radius:12px;display:flex;align-items:center;justify-content:center;color:white;">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 7V4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><rect width="18" height="13" x="3" y="7" rx="2"/></svg>
           </div>
           <div style="flex:1;">
-            <div style="font-weight:800;color:white;font-size:0.9375rem;">Texto da Cidade</div>
-            <div style="font-size:0.7rem;color:#64748B;">NOME DA PASTA / CIDADE</div>
+            <div style="font-weight:800;color:white;font-size:0.9375rem;">${isPartner ? 'Quantidade de Parceiros' : 'Texto da Cidade'}</div>
+            <div style="font-size:0.7rem;color:#64748B;">${isPartner ? '+143 PARCEIROS' : 'NOME DA PASTA / CIDADE'}</div>
           </div>
           ${ct ? '<div style="font-size:0.65rem;font-weight:900;color:#10B981;">✓ DEFINIDO</div>' : ''}
         </div>
 
-        <div style="background:#FBBF2408;border:1px solid #FBBF2420;border-radius:0.75rem;padding:0.875rem;">
-          <div style="font-size:0.65rem;font-weight:800;color:#FBBF24;margin-bottom:4px;">💡 USO DO TEXTO</div>
-          <div style="font-size:0.65rem;color:#94A3B8;line-height:1.6;">O texto usará o <b style="color:white;">nome da pasta</b> (ex: Abaeté). Posicione a área onde o nome da cidade aparecerá.</div>
+        <div style="background:${isPartner ? '#8B5CF6' : '#FBBF24'}08;border:1px solid ${isPartner ? '#8B5CF6' : '#FBBF24'}20;border-radius:0.75rem;padding:0.875rem;">
+          <div style="font-size:0.65rem;font-weight:800;color:${isPartner ? '#8B5CF6' : '#FBBF24'};margin-bottom:4px;">💡 USO DO FORMATO</div>
+          <div style="font-size:0.65rem;color:#94A3B8;line-height:1.6;">${isPartner ? 'O texto renderizará a <b style="color:white;">soma de parceiros ativos</b> sincronizados do banco. Posicione a área onde este número vai aparecer.' : 'O texto usará o <b style="color:white;">nome da pasta</b> (ex: Abaeté). Posicione a área onde o nome da cidade aparecerá.'}</div>
         </div>
 
         <div>
@@ -642,6 +650,36 @@ export const renderTemplateBuilder = (container) => {
           { pos: 'bottom:-10px;left:-10px;cursor:sw-resize;', type: 'bl' }, { pos: 'bottom:-10px;right:-10px;cursor:se-resize;', type: 'br' }].forEach(h => {
             el.innerHTML += `<div class="resize-handle" data-id="${ctKey}" data-type="${h.type}" data-fmt="${fmt}" data-slottype="cityText"
               style="position:absolute;${h.pos}width:20px;height:20px;background:white;border-radius:4px;border:3px solid #FBBF24;z-index:200;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>`;
+          });
+        }
+        layer.appendChild(el);
+      }
+
+      // ── Partner Count Slot (rectangle) ─────────────────────────────
+      const pcKey = `partnerCount${fmtSuf}`;
+      const pc = slots[pcKey];
+      if (pc) {
+        const isSelPC = selectedSlotIds.has(pcKey) && selectedFormat === fmt;
+        const el = document.createElement('div');
+        el.className = 'slot-logo';
+        el.dataset.id = pcKey;
+        el.dataset.fmt = fmt;
+        el.dataset.slottype = 'partnerCount';
+        Object.assign(el.style, {
+          position: 'absolute', left: `${pc.x * 100}%`, top: `${pc.y * 100}%`,
+          width: `${pc.w * 100}%`, height: `${pc.h * 100}%`,
+          border: isSelPC ? '3px solid #DDD6FE' : '3px solid #8B5CF6',
+          background: isSelPC ? '#8B5CF625' : '#8B5CF610',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'move', pointerEvents: 'auto', boxSizing: 'border-box',
+          zIndex: isSelPC ? '100' : '10', userSelect: 'none'
+        });
+        el.innerHTML = `<span style="color:${pc.color};font-weight:900;font-family:'${pc.font}', sans-serif;font-size:clamp(12px, 5cqw, 80px);white-space:nowrap;user-select:none;line-height:1;display:flex;align-items:center;justify-content:center;width:100%;height:100%;">+99</span>`;
+        if (isSelPC) {
+          [{ pos: 'top:-10px;left:-10px;cursor:nw-resize;', type: 'tl' }, { pos: 'top:-10px;right:-10px;cursor:ne-resize;', type: 'tr' },
+          { pos: 'bottom:-10px;left:-10px;cursor:sw-resize;', type: 'bl' }, { pos: 'bottom:-10px;right:-10px;cursor:se-resize;', type: 'br' }].forEach(h => {
+            el.innerHTML += `<div class="resize-handle" data-id="${pcKey}" data-type="${h.type}" data-fmt="${fmt}" data-slottype="partnerCount"
+              style="position:absolute;${h.pos}width:20px;height:20px;background:white;border-radius:4px;border:3px solid #8B5CF6;z-index:200;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>`;
           });
         }
         layer.appendChild(el);
@@ -827,7 +865,7 @@ export const renderTemplateBuilder = (container) => {
     window.switchSegmentTab = (segId) => { switchSegment(segId); };
     window.applyToAllSegs = () => {
       const step = activeSteps[currentStepIdx];
-      const scope = step?.id === 'logos' ? 'logos' : step?.id === 'cityImage' ? 'image' : step?.id === 'cityText' ? 'text' : undefined;
+      const scope = step?.id === 'logos' ? 'logos' : step?.id === 'cityImage' ? 'image' : (step?.id === 'cityText' || step?.id === 'partnerCount') ? 'text' : undefined;
       applyToAllSegments(scope);
       update();
     };
@@ -845,6 +883,7 @@ export const renderTemplateBuilder = (container) => {
       pushHistory();
       if (step.id === 'cityImage') slots[`cityImage${fmtSuf}`] = null;
       if (step.id === 'cityText') slots[`cityText${fmtSuf}`] = null;
+      if (step.id === 'partnerCount') slots[`partnerCount${fmtSuf}`] = null;
       selectedSlotIds.clear();
       persistSlots();
       update();
@@ -951,7 +990,7 @@ export const renderTemplateBuilder = (container) => {
     window.alignTextSlot = (dir) => {
       const step = activeSteps[currentStepIdx];
       const fmtSuf = selectedFormat.charAt(0).toUpperCase() + selectedFormat.slice(1);
-      const key = step.id === 'cityText' ? `cityText${fmtSuf}` : `cityImage${fmtSuf}`;
+      const key = step.id === 'cityText' ? `cityText${fmtSuf}` : step.id === 'partnerCount' ? `partnerCount${fmtSuf}` : `cityImage${fmtSuf}`;
       const slot = slots[key];
       if (!slot) return;
       pushHistory();
@@ -1051,8 +1090,8 @@ export const renderTemplateBuilder = (container) => {
             activeSegments.forEach(seg => {
               const s = allSegmentSlots[seg.id] || makeDefaultSlots();
               segData[seg.id] = {
-                feed: { logos: s.logosFeed || [], cityText: s.cityTextFeed || null, cityImage: s.cityImageFeed || null },
-                story: { logos: s.logosStory || [], cityText: s.cityTextStory || null, cityImage: s.cityImageStory || null }
+                feed: { logos: s.logosFeed || [], cityText: s.cityTextFeed || null, cityImage: s.cityImageFeed || null, partnerCount: s.partnerCountFeed || null },
+                story: { logos: s.logosStory || [], cityText: s.cityTextStory || null, cityImage: s.cityImageStory || null, partnerCount: s.partnerCountStory || null }
               };
             });
             state.finalBuilderSlots = {
@@ -1064,8 +1103,8 @@ export const renderTemplateBuilder = (container) => {
               type: 'single',
               logoSource: slots.logoSource || 'top20',
               syncMode: slots.syncMode || 'off',
-              feed: { logos: slots.logosFeed || [], cityText: slots.cityTextFeed || null, cityImage: slots.cityImageFeed || null },
-              story: { logos: slots.logosStory || [], cityText: slots.cityTextStory || null, cityImage: slots.cityImageStory || null }
+              feed: { logos: slots.logosFeed || [], cityText: slots.cityTextFeed || null, cityImage: slots.cityImageFeed || null, partnerCount: slots.partnerCountFeed || null },
+              story: { logos: slots.logosStory || [], cityText: slots.cityTextStory || null, cityImage: slots.cityImageStory || null, partnerCount: slots.partnerCountStory || null }
             };
           }
           navigate('global-preview');
@@ -1075,8 +1114,11 @@ export const renderTemplateBuilder = (container) => {
 
     // Text panel: font and color handlers
     window.updateTextFont = (fontValue) => {
+      const step = activeSteps[currentStepIdx];
+      const isPartner = step && step.id === 'partnerCount';
+      const baseKey = isPartner ? 'partnerCount' : 'cityText';
       const fmtSuf = selectedFormat.charAt(0).toUpperCase() + selectedFormat.slice(1);
-      const key = `cityText${fmtSuf}`;
+      const key = `${baseKey}${fmtSuf}`;
       if (slots[key]) {
         slots[key] = { ...slots[key], font: fontValue };
         syncSlots(selectedFormat, getSyncScope());
@@ -1095,8 +1137,11 @@ export const renderTemplateBuilder = (container) => {
         val = '#FFFFFF';
       }
 
+      const step = activeSteps[currentStepIdx];
+      const isPartner = step && step.id === 'partnerCount';
+      const baseKey = isPartner ? 'partnerCount' : 'cityText';
       const fmtSuf = selectedFormat.charAt(0).toUpperCase() + selectedFormat.slice(1);
-      const key = `cityText${fmtSuf}`;
+      const key = `${baseKey}${fmtSuf}`;
       if (slots[key]) {
         slots[key] = { ...slots[key], color: val };
         syncSlots(selectedFormat, getSyncScope());
@@ -1379,16 +1424,16 @@ export const renderTemplateBuilder = (container) => {
                 syncSlots(selectedFormat, getSyncScope());
               }
             }
-          } else if (step.id === 'cityImage' || step.id === 'cityText') {
+          } else if (step.id === 'cityImage' || step.id === 'cityText' || step.id === 'partnerCount') {
             const w = Math.abs(dX), h = Math.abs(dY);
             if (w > 0.01 && h > 0.005) {
               pushHistory();
               const x = dX >= 0 ? startX : startX - w, y = dY >= 0 ? startY : startY - h;
-              const key = step.id === 'cityImage' ? `cityImage${fmtSuf}` : `cityText${fmtSuf}`;
+              const key = step.id === 'cityImage' ? `cityImage${fmtSuf}` : step.id === 'cityText' ? `cityText${fmtSuf}` : `partnerCount${fmtSuf}`;
               const prevFont = slots[key]?.font || 'Manrope';
               const prevColor = slots[key]?.color || '#FFFFFF';
               const prevMode = slots[key]?.mode || 'cover';
-              slots[key] = step.id === 'cityText' ? { x, y, w, h, font: prevFont, color: prevColor } : { x, y, w, h, mode: prevMode };
+              slots[key] = (step.id === 'cityText' || step.id === 'partnerCount') ? { x, y, w, h, font: prevFont, color: prevColor } : { x, y, w, h, mode: prevMode };
               selectedSlotIds.clear(); selectedSlotIds.add(key);
             }
           }

@@ -116,7 +116,8 @@ export const renderCreateCampaign = (container) => {
     <div style="background: white; border: 1px solid #E2E8F0; border-radius: 1.25rem; overflow: hidden; box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);">
        ${renderDynamicOption('Usar imagem da cidade', 'Substitui o fundo pela foto principal da cidade.', 'cityImage', cc.dynamicOptions.cityImage)}
        ${renderDynamicOption(cc.type === 'segment' ? 'Usar Segmentos' : 'Usar Top 20', cc.type === 'segment' ? 'Inclui os logos dos segmentos ativos na arte.' : 'Inclui os logos dos estabelecimentos mais populares.', 'useTop20', cc.dynamicOptions.useTop20)}
-       ${renderDynamicOption('Usar texto da cidade', 'Insere o nome da cidade dinamicamente na arte.', 'useCityText', cc.dynamicOptions.useCityText, true)}
+       ${renderDynamicOption('Usar texto da cidade', 'Insere o nome da cidade dinamicamente na arte.', 'useCityText', cc.dynamicOptions.useCityText)}
+       ${renderDynamicOption('Quantidade de parceiros ativos', 'Imprime o número total de lojas na cidade.', 'usePartnerCount', cc.dynamicOptions.usePartnerCount, true)}
     </div>
     <div style="height: 60px;"></div>
     `;
