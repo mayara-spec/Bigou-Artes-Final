@@ -622,6 +622,45 @@ export const renderAssetManager = (container) => {
         if (type === 'segment') blob = await getSegmentLogoBlob(id);
         if (type === 'city') blob = await getCityPhoto(id);
 
+        // ── If no blob in DB, try to download via fallbackUrl and cache it ──
+        if (!blob) {
+          let fallbackUrl = null;
+          let logoRef = null;
+          if (type === 'top20') {
+            logoRef = state.logos.find(l => String(l.id) === String(id));
+            if (logoRef) fallbackUrl = logoRef.fallbackUrl || logoRef.rawS3Url;
+          } else if (type === 'segment') {
+            logoRef = state.segmentLogos.find(l => String(l.id) === String(id));
+            if (logoRef) fallbackUrl = logoRef.fallbackUrl || logoRef.rawS3Url;
+          }
+
+          if (fallbackUrl) {
+            try {
+              // Use proxy URL for cross-origin images
+              const proxyUrl = fallbackUrl.startsWith('/logo-proxy')
+                ? fallbackUrl
+                : `/logo-proxy?url=${encodeURIComponent(fallbackUrl)}`;
+
+              const resp = await fetch(proxyUrl);
+              if (resp.ok) {
+                const ct = (resp.headers.get('content-type') || '').toLowerCase();
+                const fetchedBlob = await resp.blob();
+                if ((ct.startsWith('image/') || fetchedBlob.size > 512) && fetchedBlob.size > 200) {
+                  blob = fetchedBlob;
+                  // Cache blob in IndexedDB for next reload
+                  if (type === 'top20' && logoRef) {
+                    await saveTop20Logo(logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
+                  } else if (type === 'segment' && logoRef) {
+                    await saveSegmentLogo(logoRef.segmentId, logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
+                  }
+                }
+              }
+            } catch (fetchErr) {
+              console.warn(`[hydrate] Failed to download fallback for ${id}:`, fetchErr.message);
+            }
+          }
+        }
+
         if (blob) {
           const url = URL.createObjectURL(blob);
           img.src = url;
@@ -644,32 +683,8 @@ export const renderAssetManager = (container) => {
             if (cityObj) { cityObj.image = url; cityObj.hasPhoto = true; }
           }
         } else {
-          // Check for fallbackUrl
-          let fallback = null;
-          if (type === 'top20') {
-            const logo = state.logos.find(l => String(l.id) === String(id));
-            if (logo && logo.fallbackUrl) fallback = logo.fallbackUrl;
-          } else if (type === 'segment') {
-            const logo = state.segmentLogos.find(l => String(l.id) === String(id));
-            if (logo && logo.fallbackUrl) fallback = logo.fallbackUrl;
-          }
-
-          if (fallback) {
-            img.src = fallback;
-            img.style.display = 'block';
-            if (type === 'top20') {
-              const logo = state.logos.find(l => String(l.id) === String(id));
-              if (logo) { logo.data = fallback; logo.memoryUrl = false; }
-            } else if (type === 'segment') {
-              const logo = state.segmentLogos.find(l => String(l.id) === String(id));
-              if (logo) { logo.data = fallback; logo.memoryUrl = false; }
-            }
-            const spinner = document.getElementById(`spinner-${id}`);
-            if (spinner) spinner.style.display = 'none';
-          } else {
-            const spinner = document.getElementById(`spinner-${id}`);
-            if (spinner) spinner.innerHTML = '<span style="color:#EF4444; font-size:10px;">Falhou</span>';
-          }
+          const spinner = document.getElementById(`spinner-${id}`);
+          if (spinner) spinner.innerHTML = '<span style="color:#EF4444; font-size:10px;">Falhou</span>';
         }
       } catch (e) {
         console.error("Erro ao hidratar imagem", id, e);
