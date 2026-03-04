@@ -79,8 +79,3 @@ export default async (request) => {
         return new Response(`Proxy fetch failed: ${err.message}`, { status: 502 });
     }
 };
-
-// Netlify Function config
-export const config = {
-    path: "/logo-proxy",
-};

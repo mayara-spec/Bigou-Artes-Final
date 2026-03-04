@@ -624,39 +624,59 @@ export const renderAssetManager = (container) => {
 
         // ── If no blob in DB, try to download via fallbackUrl and cache it ──
         if (!blob) {
-          let fallbackUrl = null;
+          let downloadUrl = null;
           let logoRef = null;
           if (type === 'top20') {
             logoRef = state.logos.find(l => String(l.id) === String(id));
-            if (logoRef) fallbackUrl = logoRef.fallbackUrl || logoRef.rawS3Url;
           } else if (type === 'segment') {
             logoRef = state.segmentLogos.find(l => String(l.id) === String(id));
-            if (logoRef) fallbackUrl = logoRef.fallbackUrl || logoRef.rawS3Url;
           }
 
-          if (fallbackUrl) {
-            try {
-              // Use proxy URL for cross-origin images
-              const proxyUrl = fallbackUrl.startsWith('/logo-proxy')
-                ? fallbackUrl
-                : `/logo-proxy?url=${encodeURIComponent(fallbackUrl)}`;
+          if (logoRef) {
+            // Try multiple sources for the download URL
+            downloadUrl = logoRef.fallbackUrl || logoRef.rawS3Url || logoRef.data;
+            // If data was already a proxy URL (from old imports), use it
+            if (!downloadUrl && logoRef.data && typeof logoRef.data === 'string' && logoRef.data.startsWith('/logo-proxy')) {
+              downloadUrl = logoRef.data;
+            }
+          }
 
-              const resp = await fetch(proxyUrl);
-              if (resp.ok) {
-                const ct = (resp.headers.get('content-type') || '').toLowerCase();
-                const fetchedBlob = await resp.blob();
-                if ((ct.startsWith('image/') || fetchedBlob.size > 512) && fetchedBlob.size > 200) {
-                  blob = fetchedBlob;
-                  // Cache blob in IndexedDB for next reload
-                  if (type === 'top20' && logoRef) {
-                    await saveTop20Logo(logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
-                  } else if (type === 'segment' && logoRef) {
-                    await saveSegmentLogo(logoRef.segmentId, logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
+          console.log(`[hydrate] ${id}: blob=null, downloadUrl=${downloadUrl ? downloadUrl.substring(0, 60) + '...' : 'NONE'}, keys=${logoRef ? Object.keys(logoRef).join(',') : 'NO_REF'}`);
+
+          if (downloadUrl) {
+            try {
+              // Ensure the URL goes through the proxy
+              let proxyUrl;
+              if (downloadUrl.startsWith('/logo-proxy')) {
+                proxyUrl = downloadUrl;
+              } else if (downloadUrl.startsWith('http')) {
+                proxyUrl = `/logo-proxy?url=${encodeURIComponent(downloadUrl)}`;
+              } else {
+                proxyUrl = null; // Can't use this URL
+              }
+
+              if (proxyUrl) {
+                const resp = await fetch(proxyUrl);
+                console.log(`[hydrate] ${id}: fetch status=${resp.status}, ok=${resp.ok}`);
+                if (resp.ok) {
+                  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+                  const fetchedBlob = await resp.blob();
+                  if ((ct.startsWith('image/') || fetchedBlob.size > 512) && fetchedBlob.size > 200) {
+                    blob = fetchedBlob;
+                    // Cache blob in IndexedDB for next reload
+                    if (type === 'top20' && logoRef) {
+                      await saveTop20Logo(logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
+                    } else if (type === 'segment' && logoRef) {
+                      await saveSegmentLogo(logoRef.segmentId, logoRef.cityId || logoRef.name, logoRef.name, blob, null, null, id);
+                    }
+                    console.log(`[hydrate] ${id}: ✅ saved blob ${fetchedBlob.size} bytes`);
+                  } else {
+                    console.warn(`[hydrate] ${id}: invalid image ct=${ct} size=${fetchedBlob.size}`);
                   }
                 }
               }
             } catch (fetchErr) {
-              console.warn(`[hydrate] Failed to download fallback for ${id}:`, fetchErr.message);
+              console.warn(`[hydrate] ${id}: fetch failed:`, fetchErr.message);
             }
           }
         }
