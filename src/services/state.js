@@ -324,6 +324,8 @@ export const loadState = async () => {
   if (initialState.logos) {
     for (let i = 0; i < initialState.logos.length; i++) {
       const logo = initialState.logos[i];
+      // Sanitize stale blob URLs that were persisted by mistake
+      if (typeof logo.data === 'string' && logo.data.startsWith('blob:')) logo.data = null;
       try {
         const blob = await getTop20LogoBlob(logo.id);
         if (blob) {
@@ -340,8 +342,9 @@ export const loadState = async () => {
   if (initialState.segmentLogos) {
     for (let i = 0; i < initialState.segmentLogos.length; i++) {
       const logo = initialState.segmentLogos[i];
+      // Sanitize stale blob URLs that were persisted by mistake
+      if (typeof logo.data === 'string' && logo.data.startsWith('blob:')) logo.data = null;
       try {
-        // In migration, "data" could theoretically be a base64 string, but id should exist.
         const blob = await getSegmentLogoBlob(logo.id);
         if (blob) {
           logo.data = URL.createObjectURL(blob);
@@ -382,6 +385,29 @@ export const loadState = async () => {
     'currentCampaignConfig', 'finalBuilderSlots'
   ];
 
+  // ─── Keys that contain volatile blob URLs (must be stripped before persisting) ──
+  const VOLATILE_IMAGE_KEYS = ['logos', 'segmentLogos', 'cityPhotos', 'typographies'];
+
+  const stripVolatileFields = (arr) => {
+    if (!Array.isArray(arr)) return arr;
+    return arr.map(item => {
+      const { data, memoryUrl, ...rest } = item;
+      return rest;
+    });
+  };
+
+  const stripCitiesVolatile = (arr) => {
+    if (!Array.isArray(arr)) return arr;
+    return arr.map(city => {
+      const { memoryUrl, ...rest } = city;
+      // Keep image only if it's a real URL (not a blob:)
+      if (typeof rest.image === 'string' && rest.image.startsWith('blob:')) {
+        rest.image = null;
+      }
+      return rest;
+    });
+  };
+
   // ─── Reactive Proxy ─────────────────────────────────────────────────────────
   state = new Proxy(initialState, {
     set(target, property, value) {
@@ -391,6 +417,11 @@ export const loadState = async () => {
         if (property === 'currentCampaignConfig' && value) {
           const { feedTemplate, storyTemplate, ...rest } = value;
           persistDB(`bigou_${property}`, rest).catch(console.error);
+        } else if (VOLATILE_IMAGE_KEYS.includes(property)) {
+          // Never persist blob URLs — only metadata + fallbackUrl
+          persistDB(`bigou_${property}`, stripVolatileFields(value)).catch(console.error);
+        } else if (property === 'cities') {
+          persistDB(`bigou_${property}`, stripCitiesVolatile(value)).catch(console.error);
         } else {
           persistDB(`bigou_${property}`, value).catch(console.error);
         }
